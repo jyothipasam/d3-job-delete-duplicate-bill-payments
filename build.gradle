@@ -1,0 +1,29 @@
+buildscript {
+    repositories {
+        mavenLocal()
+        maven {
+            credentials {
+                username mavenUser
+                password mavenPassword
+            }
+
+            url "https://nexus.d3vcloud.com/nexus/content/groups/public"
+        }
+
+        gradlePluginPortal()
+    }
+
+    configurations.all {
+        resolutionStrategy.cacheDynamicVersionsFor 0, 'seconds'
+    }
+
+    dependencies {
+        classpath "com.d3banking.core.plugin.common:common-plugin:4.15.+"
+    }
+}
+
+apply plugin: "com.d3banking.common"
+
+subprojects {
+    apply plugin: "com.d3banking.common"
+}

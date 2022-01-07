@@ -1,0 +1,15 @@
+dependencies {
+    api project(':d3-job-delete-duplicate-bill-payments-sdk')
+
+    api "com.d3banking.core:d3-core-sdk-impl:${d3CoreVersion}"
+    api "com.d3banking.core:d3-core-api-config:${d3CoreVersion}"
+    api "com.d3banking.core:d3-job-sdk:${d3JobSdkVersion}"
+
+
+    api 'org.springframework.boot:spring-boot-starter-actuator'
+    api 'de.codecentric:spring-boot-admin-starter-client'
+    api "org.springframework.boot:spring-boot-starter-security"
+    implementation 'com.zaxxer:HikariCP'
+
+    testImplementation "com.d3banking.core:d3-test-sdk:${d3TestSdkVersion}"
+}

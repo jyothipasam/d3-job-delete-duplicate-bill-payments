@@ -1,0 +1,10 @@
+dependencies {
+    api "com.d3banking.core:d3-core-sdk-impl:${d3CoreVersion}"
+    api "com.d3banking.core:d3-job-sdk:${d3JobSdkVersion}"
+
+    //required for building entities in tests
+    testImplementation "com.d3banking.core:d3-transaction-domain:${d3TransactionVersion}"
+    testImplementation "com.d3banking.core:d3-alert-domain:${d3AlertDomainVersion}"
+
+    testImplementation "com.d3banking.core:d3-test-sdk:${d3TestSdkVersion}"
+}

@@ -1,0 +1,23 @@
+server:
+  port: 8509
+
+spring:
+  application:
+    name: d3-duplicate-bill-payments-delete-job
+
+d3:
+  context:
+    banking:
+      component: JOBS_DELETE_DUPLICATE_BILL_PAYMENTS
+  job:
+    cleanup:
+      transaction:
+        account-page-size: 1000
+        wait-time: 100ms
+        executor-service:
+          thread-pool-size: 1
+          keep-alive-time: 1s
+          work-queue-length: 250
+    context:
+      application: BANKING
+      component: JOBS

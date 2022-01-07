@@ -1,0 +1,220 @@
+name: Build
+
+# Run workflow each time a PR is run, or manually
+on:
+  workflow_dispatch:
+
+  pull_request:
+    branches:
+      - '**'
+    types: [ opened, reopened, synchronize, closed ]
+
+jobs:
+
+  build:
+    if: contains(github.ref , 'develop') || contains(github.ref , 'release/') || (contains(github.ref , 'pull') && github.event.pull_request.state != 'closed')
+    name: Run Gradle Build on codebase
+
+    runs-on: self-hosted
+
+    outputs:
+      GROUP_ID: ${{ steps.env_vars.outputs.group_id }}
+      ARTIFACT_ID: ${{ steps.env_vars.outputs.artifact_id }}
+      SONAR: ${{ steps.env_vars.outputs.sonar }}
+      IMAGE_BUILD: ${{ steps.env_vars.outputs.image_build }}
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          path: ${{ github.workspace }}/${{ github.event.repository.name }}
+
+      # Checkout actions private repo...
+      - name: Checkout remote actions
+        uses: actions/checkout@v2
+        with:
+          repository: LodoSoftware/d3-github-actions
+          token: ${{ secrets.GRGIT_USER }}
+          path: d3-github-actions
+          ref: develop
+          fetch-depth: 0
+
+      - name: Get env vars
+        uses: falti/dotenv-action@v0.2.7
+        with:
+          path: ${{ github.workspace }}/${{ github.event.repository.name }}/.github/env/.env
+        id: env_vars
+
+      - name: Setup Java
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        with:
+          path: |
+            /opt/${{ github.event.repository.name }}/.gradle/caches/
+            /opt/${{ github.event.repository.name }}/.gradle/wrapper/
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Run Gradle
+        uses: ./d3-github-actions/gradlev2
+        with:
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          JENKINS_TOKEN: ${{ secrets.JENKINS_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GRGIT_USER: ${{ secrets.GRGIT_USER }}
+          SONAR: ${{ steps.env_vars.outputs.sonar }}
+        id: gradle
+
+      - name: Cleanup Gradle Cache
+        # Remove some files from the Gradle cache, so they aren't cached by GitHub Actions.
+        # Restoring these files from a GitHub Actions cache might cause problems for future builds.
+        run: |
+          rm -f /opt/${{ github.event.repository.name }}/.gradle/gradle.properties
+          rm -f /opt/${{ github.event.repository.name }}/.gradle/caches/modules-2/modules-2.lock
+          rm -rf /opt/${{ github.event.repository.name }}/.gradle/caches/*/plugin-resolution/
+        if: always()
+          
+      - name: Check Sonar quality gate
+        uses: ./d3-github-actions/sonar-quality-gate
+        with:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        if: contains(github.ref , 'develop') && steps.env_vars.outputs.sonar == 'true'
+
+      - name: Slack Notification
+        uses: ./d3-github-actions/slack
+        with:
+          SLACK_WEBHOOK: ${{ steps.gradle.outputs.SLACK_WEBHOOK }}
+          SLACK_COLOR: '${{ job.status }}'
+          SLACK_TITLE: 'Build ${{ job.status }} for project ${{ github.repository }}'
+          SLACK_MESSAGE: 'Link to build: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+        if: always()
+
+      - name: Clean up workspace
+        run: |
+          echo "Cleaning up job"
+          echo "Workspace before:"
+          echo "---------------------------------------"
+          ls -lah "${{ github.workspace }}"
+          sudo rm -rf "${{ github.workspace }}"/*
+          echo ""
+          echo "Workspace after:"
+          echo "---------------------------------------"          
+          ls -lah "${{ github.workspace }}"
+        if: always()
+
+  image-build:
+    needs: [build]
+    if: (contains(github.ref , 'develop') || contains(github.ref , 'release/')) && needs.build.outputs.IMAGE_BUILD == 'true'
+
+    name: Build microservice docker image
+
+    runs-on: self-hosted
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          path: ${{ github.workspace }}/${{ github.event.repository.name }}
+          
+      - name: Checkout pi-team repo
+        uses: actions/checkout@v2
+        with:
+          repository: LodoSoftware/pi-team
+          token: ${{ secrets.GRGIT_USER }}
+          path: pi-team
+          ref: develop
+          fetch-depth: 0
+
+      # Checkout actions private repo...
+      - name: Checkout remote actions
+        uses: actions/checkout@v2
+        with:
+          repository: LodoSoftware/d3-github-actions
+          token: ${{ secrets.GRGIT_USER }}
+          path: d3-github-actions
+          ref: develop
+          fetch-depth: 0
+
+      - name: Pull SSM Param for Slack notification
+        uses: ./d3-github-actions/retrieve-ssm-param
+        with:
+          param: 'github.actions.slack.image-build.webhook'
+        id: retrieve-ssm-param
+        if: always()
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: us-east-1
+          role-duration-seconds: 3600
+          role-to-assume: 'arn:aws:iam::322653688247:role/hosted-to-d3-image-build'
+
+      - name: Prepare microservice image
+        uses: ./d3-github-actions/banking-microservice-image-build
+        with:
+          groupId: ${{ needs.build.outputs.GROUP_ID }}
+          artifactId: ${{ needs.build.outputs.ARTIFACT_ID }}
+        id: image-build
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Docker Login
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Artifactory Login
+        uses: docker/login-action@v1
+        with:
+          registry: ncr-lfi-docker-images-docker-releases.jfrog.io
+          username: ${{ secrets.ARTIFACTORY_USERNAME }}
+          password: ${{ secrets.ARTIFACTORY_TOKEN }}
+
+      - name: Docker build and push
+        uses: docker/build-push-action@v2
+        with:
+          context: ${{ github.workspace }}/pi-team/docker/java_app_jar_gelf/
+          file: ${{ github.workspace }}/pi-team/docker/java_app_jar_gelf/Dockerfile
+          push: true
+          tags: |
+            d3banking/${{ needs.build.outputs.ARTIFACT_ID }}:${{ steps.image-build.outputs.VERSION }}
+            d3banking/${{ needs.build.outputs.ARTIFACT_ID }}:latest
+            ncr-lfi-docker-images-docker-releases.jfrog.io/${{ needs.build.outputs.ARTIFACT_ID }}:${{ steps.image-build.outputs.VERSION }}
+            ncr-lfi-docker-images-docker-releases.jfrog.io/${{ needs.build.outputs.ARTIFACT_ID }}:latest
+          pull: true
+          no-cache: true
+
+      - name: Slack Notification
+        uses: ./d3-github-actions/slack
+        with:
+          SLACK_WEBHOOK: ${{ steps.retrieve-ssm-param.outputs.SSM_PARAM_VALUE }}
+          SLACK_COLOR: '${{ job.status }}'
+          SLACK_TITLE: 'Image build for *d3banking/${{ needs.build.outputs.ARTIFACT_ID }}:${{ steps.image-build.outputs.VERSION }}*'
+          SLACK_MESSAGE: "*Status*: ${{ job.status }}\
+                          \n*Link to build*: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        if: always()
+
+      - name: Clean up workspace
+        run: |
+          echo "Cleaning up job"
+          echo "Workspace before:"
+          echo "---------------------------------------"
+          ls -lah "${{ github.workspace }}"
+          sudo rm -rf "${{ github.workspace }}"/*
+          echo ""
+          echo "Workspace after:"
+          echo "---------------------------------------"          
+          ls -lah "${{ github.workspace }}"
+        if: always()

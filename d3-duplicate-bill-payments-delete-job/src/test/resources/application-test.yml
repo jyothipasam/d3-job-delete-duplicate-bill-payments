@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:test_mem
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+management:
+  health.rabbit.enabled: false
+
+d3:
+  job:
+    cleanup:
+      transaction:
+        account-page-size: 1000
+        wait-time: 1ms
+        executor-service:
+          thread-pool-size: 1
+          keep-alive-time: 250ms
+          work-queue-length: 250
